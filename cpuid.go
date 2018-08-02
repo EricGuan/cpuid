@@ -77,6 +77,15 @@ type CacheDescriptor struct {
 	Partioning int    // partitioning
 }
 
+type MemoryEncryptionCapabilities struct {
+	PhysAddrReduction  uint32
+	CBitPosition       uint32
+	NumEncryptedGuests uint32
+	MinSevNoEsAsid     uint32
+}
+
+var MemEncrypt MemoryEncryptionCapabilities
+
 // ThermalSensorInterruptThresholds is the number of interrupt thresholds in digital thermal sensor.
 var ThermalSensorInterruptThresholds uint32
 
@@ -93,6 +102,11 @@ func HasExtendedFeature(feature uint64) bool {
 // HasExtraFeature to check if features from ExtraFeatureNames map are available on the current processor
 func HasExtraFeature(feature uint64) bool {
 	return (extraFeatureFlags & feature) != 0
+}
+
+// HasMemEncryptFeature to check if features from MemEncryptFeatureNames map are available on the current processor
+func HasMemEncryptFeature(feature uint32) bool {
+	return (memEncryptFeatureFlags & feature) != 0
 }
 
 // HasThermalAndPowerFeature to check if features from ThermalAndPowerFeatureNames map are available on the current processor
@@ -274,6 +288,13 @@ var ExtraFeatureNames = map[uint64]string{ // From leaf 8000 0001
 	_3DNOW:       "3DNOW",
 }
 
+var MemEncryptFeatureNames = map[uint32]string{ // From leaf 8000 001f
+	SME:            "SME",
+	SEV:            "SEV",
+	PAGE_FLUSH_MSR: "PageFlushMSR",
+	SEV_ES:         "SEV-ES",
+}
+
 var brandStrings = map[string]int{
 	"AMDisbetter!": AMD,
 	"AuthenticAMD": AMD,
@@ -305,6 +326,7 @@ var featureFlags uint64
 var thermalAndPowerFeatureFlags uint32
 var extendedFeatureFlags uint64
 var extraFeatureFlags uint64
+var memEncryptFeatureFlags uint32
 
 func cpuid_low(arg1, arg2 uint32) (eax, ebx, ecx, edx uint32) // implemented in cpuidlow_amd64.s
 func xgetbv_low(arg1 uint32) (eax, edx uint32)                // implemented in cpuidlow_amd64.s
@@ -346,6 +368,7 @@ func detectFeatures() {
 	leaf0x80000004()
 	leaf0x80000005()
 	leaf0x80000006()
+	leaf0x8000001f()
 
 	if HasFeature(OSXSAVE) {
 		eax, _ := xgetbv_low(0)
@@ -567,6 +590,14 @@ const (
 	DTLB
 	STLB
 	PREFETCH
+)
+
+// Memory encryption capabilities
+const (
+	SME = iota
+	SEV
+	PAGE_FLUSH_MSR
+	SEV_ES
 )
 
 var leaf02Names = [...]string{
@@ -987,6 +1018,34 @@ func leaf0x80000006() {
 				-1,
 				int(L3LinesPerTag),
 			})
+	}
+}
+
+func leaf0x8000001f() {
+
+	if maxExtendedInputValue < 0x8000001f {
+		return
+	}
+
+	if brandId != AMD {
+		return
+	}
+
+	eax, ebx, ecx, edx := cpuid_low(0x8000001f, 0)
+
+	// Parse EAX
+	memEncryptFeatureFlags = eax
+
+	if HasMemEncryptFeature(SME) || HasMemEncryptFeature(SEV) {
+		// Parse EBX
+		MemEncrypt.CBitPosition = ebx & 0x3F
+		MemEncrypt.PhysAddrReduction = (ebx >> 6) & 0x3F
+
+		// Parse ECX
+		MemEncrypt.NumEncryptedGuests = ecx
+
+		// Parse EDX
+		MemEncrypt.MinSevNoEsAsid = edx
 	}
 }
 
